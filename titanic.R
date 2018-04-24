@@ -4,7 +4,6 @@ library(caret)
 library(randomForest)
 library(lava)
 library(dplyr)
-library(plyr)
 
 library(ggplot2)
 
@@ -40,8 +39,67 @@ full$Title[full$Title=="Rev"] = "Mr"
 full$Title[full$Title=="Sir"] = "Mr"
 full$Title[full$Title=="the Countess"] = "Mrs"
 
-# Group by Last Name or Ticket Number?
-ByLastName <- full %>% group_by(LastName)
+# Start with the Group Number as the ticket number. 
+# We will modify this field to join some groups
+# that had separate ticket entries
+full$GroupNumber <- full$Ticket
+
+# Get Number in Group
+full$NumberInGroup <- full$SibSp + full$Parch + 1
+
+ErrorReport <- function(dframe, groupVar) {
+  dframe %>% 
+  dplyr::group_by(groupVar)
+}
+
+InGroups <- full %>% 
+              dplyr::group_by(Ticket) %>%
+              dplyr::mutate(GroupNumber=sample(1:1000,1))
+
+ErrorGroup <- InGroups %>% 
+  dplyr::group_by(Ticket) %>%
+  dplyr::summarize(TotalSibSp = sum(SibSp),
+                   TotalParch = sum(Parch),
+                   CountPerTicket = n(),
+                   GroupNumber = unique(GroupNumber),
+                   LastNames = length(unique(LastName)),
+                   LastName = ifelse(LastNames==1, LastName, paste0(LastName, collapse = ";"))) %>%
+  dplyr::filter(TotalSibSp%%2 != 0 | TotalParch%%2 != 0) 
+
+# match these suckers
+# we are looking for families (where lastname is the same) with 
+JoinedFamilies <- ErrorGroup %>% 
+                  dplyr::group_by(LastName) %>%
+                  dplyr::summarize(Ticket=paste0(as.character(Ticket), collapse=";"),
+                                   GroupNumber=max(GroupNumber),
+                                   TotalSibSp=sum(TotalSibSp),
+                                   TotalParch=sum(TotalParch),
+                                   CountPerGroup=sum(CountPerTicket),
+                                   LastNames=sum(LastNames))
+
+JoinedFamilies <- JoinedFamilies %>% mutate(LastName=strsplit(LastName, ";")) %>%
+  tidyr::unnest(LastName)
+
+JoinedFamilies <- JoinedFamilies %>% mutate(Ticket=strsplit(Ticket, ";")) %>%
+  tidyr::unnest(Ticket)
+  
+  
+
+
+
+JoinedFamilies <- JoinedFamilies %>% dplyr::filter(TotalSibSp%%2 != 0 | TotalParch%%2 != 0) 
+
+JoinedFamilies <- JoinedFamilies %>% mutate(LastName=strsplit(LastName, ";")) %>%
+  tidyr::unnest(LastName)
+
+JoinedFamilies <- JoinedFamilies %>% mutate(Ticket=strsplit(Ticket, ";")) %>%
+                  tidyr::unnest(Ticket)
+
+# 23 left that are not grouped correctly ... manually reassign?
+
+write.csv(JoinedFamilies, "outstanding.csv", row.names=FALSE)
+
+
 
 ggplot(data=as.data.frame(table(full$Title)), aes(Var1, Freq)) +
        geom_bar(stat="identity", fill="red") + 
